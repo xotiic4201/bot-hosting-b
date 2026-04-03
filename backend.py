@@ -34,7 +34,8 @@ else:
     log.info("Supabase credentials loaded")
 
 log.info(f"Bot token loaded: {BOT_TOKEN[:12]}...")
-log.info(f"Channel ID: {CHANNEL_ID}")
+log.info(f"Channel ID: {CHANNEL_ID} (type: {type(CHANNEL_ID)})")
+log.info(f"Channel ID length: {len(str(CHANNEL_ID))} digits")
 
 # ==================== SUPABASE INIT ====================
 supabase: Optional[Client] = None
@@ -60,7 +61,7 @@ class LoginResponse(BaseModel):
 
 class BotTokenResponse(BaseModel):
     bot_token: str
-    channel_id: int
+    channel_id: str  # CHANGED: from int to str
     message: str
 
 class ScanCompleteRequest(BaseModel):
@@ -124,7 +125,7 @@ class KeyManager:
                 if existing.data:
                     return await self.generate(user_id, days)
                 
-                # Insert new key - without duration_days column
+                # Insert new key
                 now = datetime.now()
                 expires_at = now + timedelta(days=days)
                 
@@ -321,6 +322,7 @@ async def health():
         "status": "healthy",
         "bot_token": bool(BOT_TOKEN),
         "channel_id": CHANNEL_ID,
+        "channel_id_type": str(type(CHANNEL_ID)),
         "supabase": bool(supabase),
         "keys": stats,
         "active_scans": len(active_scans),
@@ -332,10 +334,14 @@ async def health():
 async def get_bot_token(x_api_key: Optional[str] = Header(None)):
     if x_api_key != API_KEY:
         raise HTTPException(401, "Invalid API key")
-    log.info("Bot token requested")
+    
+    # Ensure channel_id is returned as string
+    channel_id_str = str(CHANNEL_ID)
+    log.info(f"Bot token requested - returning channel_id: {channel_id_str} (length: {len(channel_id_str)})")
+    
     return BotTokenResponse(
         bot_token=BOT_TOKEN,
-        channel_id=int(CHANNEL_ID),
+        channel_id=channel_id_str,  # Return as string
         message="Bot token retrieved"
     )
 
@@ -480,6 +486,8 @@ if __name__ == "__main__":
     port = int(os.getenv('PORT', 5000))
     log.info(f"Starting xotiic CyberScan API on port {port}")
     log.info(f"Supabase: {'Connected' if supabase else 'Not connected (using memory)'}")
+    log.info(f"Final channel_id value: {CHANNEL_ID}")
+    log.info(f"Final channel_id type: {type(CHANNEL_ID)}")
     
     import asyncio
     async def startup():
