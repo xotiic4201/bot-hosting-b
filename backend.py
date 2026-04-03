@@ -29,7 +29,7 @@ log.info(f"Bot token loaded: {BOT_TOKEN[:12]}...")
 log.info(f"Channel ID: {CHANNEL_ID}")
 
 # ==================== APP ====================
-app = FastAPI(title="xotiic CyberScan API", version="2.0.0")
+app = FastAPI(title="xotiic CyberScan API", version="2.1.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 # ==================== MODELS ====================
@@ -93,7 +93,7 @@ class KeyManager:
     def generate(self, user_id: str, days: int = 30) -> str:
         chars = string.ascii_uppercase + string.digits
         parts = [''.join(secrets.choice(chars) for _ in range(5)) for _ in range(3)]
-        key = f"X-{'—'.join(parts)}"
+        key = f"X-{'-'.join(parts)}"
         expires = (datetime.now() + timedelta(days=days)).timestamp()
         self.keys[key] = {
             'user_id': user_id,
@@ -118,7 +118,6 @@ class KeyManager:
             if not kd: continue
             if kd['used']:     continue
             if now > kd['expires_at']: continue
-            # Valid — mark used
             self.keys[k]['used']    = True
             self.keys[k]['used_at'] = datetime.now().isoformat()
             self._save()
@@ -145,7 +144,7 @@ start_time = datetime.now()
 async def root():
     return {
         "service": "xotiic CyberScan API",
-        "version": "2.0.0",
+        "version": "2.1.0",
         "status": "online",
         "uptime": str(datetime.now() - start_time).split('.')[0],
     }
@@ -164,17 +163,14 @@ async def health():
 
 @app.get("/api/bot-token", response_model=BotTokenResponse)
 async def get_bot_token(x_api_key: Optional[str] = Header(None)):
-    """
-    Called by the client on startup BEFORE user logs in.
-    Returns bot token so the Discord bot can be pre-loaded.
-    """
+    """Returns bot token so client can send Discord messages via REST."""
     if x_api_key != API_KEY:
         raise HTTPException(401, "Invalid API key")
-    log.info("Bot token requested (pre-load)")
+    log.info("Bot token requested")
     return BotTokenResponse(
         bot_token=BOT_TOKEN,
         channel_id=int(CHANNEL_ID),
-        message="Bot token retrieved — bot ready to pre-load"
+        message="Bot token retrieved"
     )
 
 @app.post("/api/login", response_model=LoginResponse)
