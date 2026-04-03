@@ -81,6 +81,14 @@ class GenerateKeyResponse(BaseModel):
     expires_at: str
     message: str
 
+class VerifyKeyRequest(BaseModel):
+    scan_key: str
+    user_id: str
+
+class VerifyKeyResponse(BaseModel):
+    valid: bool
+    message: str
+
 # ==================== KEY MANAGER (Supabase) ====================
 class KeyManager:
     def __init__(self):
@@ -116,7 +124,7 @@ class KeyManager:
                 if existing.data:
                     return await self.generate(user_id, days)
                 
-                # Insert new key
+                # Insert new key - without duration_days column
                 now = datetime.now()
                 expires_at = now + timedelta(days=days)
                 
@@ -126,8 +134,7 @@ class KeyManager:
                     'generated_by': 'admin',
                     'created_at': now.isoformat(),
                     'expires_at': expires_at.isoformat(),
-                    'used': False,
-                    'duration_days': days
+                    'used': False
                 }
                 
                 result = self.supabase.table('scan_keys').insert(data).execute()
@@ -212,6 +219,41 @@ class KeyManager:
                 
             return False, "No valid keys found (all used or expired). Contact xotiic.", None
 
+    async def verify_specific_key(self, scan_key: str, user_id: str):
+        """Verify a specific key without marking it as used"""
+        if self.supabase:
+            try:
+                now = datetime.now().isoformat()
+                result = self.supabase.table('scan_keys')\
+                    .select('*')\
+                    .eq('scan_key', scan_key)\
+                    .eq('user_id', user_id)\
+                    .eq('used', False)\
+                    .gt('expires_at', now)\
+                    .execute()
+                
+                if result.data:
+                    return True, "Key is valid"
+                else:
+                    return False, "Invalid or expired key"
+                    
+            except Exception as e:
+                log.error(f"Error verifying key: {e}")
+                return False, f"Error: {e}"
+        else:
+            # Memory fallback
+            key_data = self.keys.get(scan_key)
+            if not key_data:
+                return False, "Key not found"
+            if key_data.get('used'):
+                return False, "Key already used"
+            if datetime.now().timestamp() > key_data['expires_at']:
+                return False, "Key expired"
+            if key_data['user_id'] != user_id:
+                return False, "Key not assigned to this user"
+            
+            return True, "Key is valid"
+
     async def stats(self) -> Dict:
         """Get key statistics"""
         if self.supabase:
@@ -261,53 +303,6 @@ scan_history = []
 start_time = datetime.now()
 
 # ==================== ROUTES ====================
-
-# Add this to backend.py after the other routes
-
-class VerifyKeyRequest(BaseModel):
-    scan_key: str
-    user_id: str
-
-class VerifyKeyResponse(BaseModel):
-    valid: bool
-    message: str
-
-@app.post("/api/verify-key", response_model=VerifyKeyResponse)
-async def verify_key(req: VerifyKeyRequest, x_api_key: Optional[str] = Header(None)):
-    """Verify a specific scan key for a user"""
-    if x_api_key != API_KEY:
-        raise HTTPException(401, "Invalid API key")
-    
-    if supabase:
-        try:
-            now = datetime.now().isoformat()
-            result = supabase.table('scan_keys')\
-                .select('*')\
-                .eq('scan_key', req.scan_key)\
-                .eq('user_id', req.user_id)\
-                .eq('used', False)\
-                .gt('expires_at', now)\
-                .execute()
-            
-            if result.data:
-                return VerifyKeyResponse(valid=True, message="Key is valid")
-            else:
-                return VerifyKeyResponse(valid=False, message="Invalid or expired key")
-        except Exception as e:
-            return VerifyKeyResponse(valid=False, message=f"Error: {e}")
-    else:
-        # Memory fallback
-        key_data = keys.keys.get(req.scan_key)
-        if not key_data:
-            return VerifyKeyResponse(valid=False, message="Key not found")
-        if key_data.get('used'):
-            return VerifyKeyResponse(valid=False, message="Key already used")
-        if datetime.now().timestamp() > key_data['expires_at']:
-            return VerifyKeyResponse(valid=False, message="Key expired")
-        if key_data['user_id'] != req.user_id:
-            return VerifyKeyResponse(valid=False, message="Key not assigned to this user")
-        
-        return VerifyKeyResponse(valid=True, message="Key is valid")
 
 @app.get("/")
 async def root():
@@ -367,6 +362,15 @@ async def login(req: LoginRequest, x_api_key: Optional[str] = Header(None)):
     log.info(f"Login OK: {uid} | scan_id: {scan_id} | key: {used_key}")
     return LoginResponse(success=True, scan_id=scan_id, message=f"Authorized. Scan ID: {scan_id}")
 
+@app.post("/api/verify-key", response_model=VerifyKeyResponse)
+async def verify_key(req: VerifyKeyRequest, x_api_key: Optional[str] = Header(None)):
+    """Verify a specific scan key for a user without marking it as used"""
+    if x_api_key != API_KEY:
+        raise HTTPException(401, "Invalid API key")
+    
+    valid, message = await keys.verify_specific_key(req.scan_key, req.user_id)
+    return VerifyKeyResponse(valid=valid, message=message)
+
 @app.post("/api/scan/complete")
 async def scan_complete(req: ScanCompleteRequest, x_api_key: Optional[str] = Header(None)):
     if x_api_key != API_KEY:
@@ -416,17 +420,17 @@ async def generate_key(req: GenerateKeyRequest, x_api_key: Optional[str] = Heade
     if x_api_key != API_KEY:
         raise HTTPException(401, "Invalid API key")
 
-    scan_key = await keys.generate(req.user_id, req.duration_days)
+    scan_key = await keys.generate(req.user_id, req.duration_days or 30)
     if not scan_key:
         raise HTTPException(500, "Failed to generate key")
 
-    exp = (datetime.now() + timedelta(days=req.duration_days)).strftime('%Y-%m-%d %H:%M:%S')
+    exp = (datetime.now() + timedelta(days=req.duration_days or 30)).strftime('%Y-%m-%d %H:%M:%S')
 
     return GenerateKeyResponse(
         key=scan_key,
         user_id=req.user_id,
         expires_at=exp,
-        message=f"Key valid for {req.duration_days} days. Expires {exp}."
+        message=f"Key valid for {req.duration_days or 30} days. Expires {exp}."
     )
 
 @app.get("/api/stats")
