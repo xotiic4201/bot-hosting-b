@@ -262,6 +262,53 @@ start_time = datetime.now()
 
 # ==================== ROUTES ====================
 
+# Add this to backend.py after the other routes
+
+class VerifyKeyRequest(BaseModel):
+    scan_key: str
+    user_id: str
+
+class VerifyKeyResponse(BaseModel):
+    valid: bool
+    message: str
+
+@app.post("/api/verify-key", response_model=VerifyKeyResponse)
+async def verify_key(req: VerifyKeyRequest, x_api_key: Optional[str] = Header(None)):
+    """Verify a specific scan key for a user"""
+    if x_api_key != API_KEY:
+        raise HTTPException(401, "Invalid API key")
+    
+    if supabase:
+        try:
+            now = datetime.now().isoformat()
+            result = supabase.table('scan_keys')\
+                .select('*')\
+                .eq('scan_key', req.scan_key)\
+                .eq('user_id', req.user_id)\
+                .eq('used', False)\
+                .gt('expires_at', now)\
+                .execute()
+            
+            if result.data:
+                return VerifyKeyResponse(valid=True, message="Key is valid")
+            else:
+                return VerifyKeyResponse(valid=False, message="Invalid or expired key")
+        except Exception as e:
+            return VerifyKeyResponse(valid=False, message=f"Error: {e}")
+    else:
+        # Memory fallback
+        key_data = keys.keys.get(req.scan_key)
+        if not key_data:
+            return VerifyKeyResponse(valid=False, message="Key not found")
+        if key_data.get('used'):
+            return VerifyKeyResponse(valid=False, message="Key already used")
+        if datetime.now().timestamp() > key_data['expires_at']:
+            return VerifyKeyResponse(valid=False, message="Key expired")
+        if key_data['user_id'] != req.user_id:
+            return VerifyKeyResponse(valid=False, message="Key not assigned to this user")
+        
+        return VerifyKeyResponse(valid=True, message="Key is valid")
+
 @app.get("/")
 async def root():
     return {
