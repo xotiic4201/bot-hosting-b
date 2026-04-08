@@ -5,7 +5,7 @@ import string
 import json
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List
-from fastapi import FastAPI, HTTPException, Header
+from fastapi import FastAPI, HTTPException, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import uvicorn
@@ -328,7 +328,7 @@ async def health():
         "uptime": str(datetime.now() - start_time).split('.')[0]
     }
 
-@app.get("/api/bot-token", response_model=BotTokenResponse)
+@app.get("/api/bot-token")
 async def get_bot_token(verified: bool = Depends(verify_api_key)):
     """Return Discord bot token and channel ID for the scanner app"""
     return BotTokenResponse(
@@ -337,7 +337,7 @@ async def get_bot_token(verified: bool = Depends(verify_api_key)):
         message="Bot token retrieved. Set DISCORD_BOT_TOKEN env var for real bot."
     )
 
-@app.post("/api/login", response_model=LoginResponse)
+@app.post("/api/login")
 async def login(req: LoginRequest, verified: bool = Depends(verify_api_key)):
     """Authenticate a user with Discord ID and optional scan key"""
     uid = req.user_id.strip()
@@ -360,7 +360,7 @@ async def login(req: LoginRequest, verified: bool = Depends(verify_api_key)):
     log.info(f"Login OK: {uid} | scan_id: {scan_id}")
     return LoginResponse(success=True, scan_id=scan_id, message=f"Authorized! Scan ID: {scan_id}")
 
-@app.post("/api/verify-key", response_model=VerifyKeyResponse)
+@app.post("/api/verify-key")
 async def verify_key(req: VerifyKeyRequest, verified: bool = Depends(verify_api_key)):
     """Verify a scan key without marking it as used"""
     valid, msg, _ = await storage.validate_key(req.user_id, req.scan_key)
@@ -461,7 +461,7 @@ async def get_live_logs(limit: int = 20, verified: bool = Depends(verify_api_key
         "total_files": stats['total_files_scanned']
     }
 
-@app.post("/api/generate-key", response_model=GenerateKeyResponse)
+@app.post("/api/generate-key")
 async def generate_key(req: GenerateKeyRequest, verified: bool = Depends(verify_api_key)):
     """Generate a new scan key for a user"""
     scan_key = await storage.generate_key(req.user_id, req.duration_days or 30)
